@@ -21,13 +21,16 @@ to local JSON files.
      `freeAgentAuctionResults.json`, `moneyEvents_<teamId>.json` × 10
    - `trades.json` is only scoped for the commissioner permissions today, this data is availible in transactions but needs to be translated from ID's
 
-## Install (developer mode)
+## Installation Guide
 
-1. Open Chrome → `chrome://extensions`
-2. Enable **Developer mode** (toggle top-right)
-3. Click **Load unpacked**
-4. Select `lt-data-dump/` from where you cloned the Github repo
-5. The "League Tycoon Data Dump" extension appears in your toolbar
+To clone and run this project locally, you'll need Git installed on your machine
+
+1. Clone the repo -> run `git clone https://github.com/knorton320/lt-data-dump` from your terminal
+2. Open Chrome → `chrome://extensions`
+3. Enable **Developer mode** (toggle top-right)
+4. Click **Load unpacked**
+5. Select `lt-data-dump/` from the directory where you cloned the Github repo
+6. The "League Tycoon Data Dump" extension appears in your toolbar
 
 ## Configure Chrome downloads folder
 
