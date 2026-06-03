@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "League Tycoon Data Dump",
+  "description": "Dumps your League Tycoon data to local JSON files for personal use.",
+  "version": "1.0.0",
+
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
+
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "LT Sync"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["https://app.leaguetycoon.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "permissions": [
+    "storage",
+    "downloads",
+    "activeTab"
+  ],
+
+  "host_permissions": [
+    "https://app.leaguetycoon.com/*",
+    "https://firestore.googleapis.com/*"
+  ],
+
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

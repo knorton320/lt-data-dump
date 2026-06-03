@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LT Data Dump</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 13px;
+      width: 340px;
+      padding: 14px;
+      background: #111;
+      color: #eee;
+    }
+
+    h1 {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 10px;
+      color: #fff;
+    }
+
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    label {
+      flex: 0 0 90px;
+      font-size: 12px;
+      color: #aaa;
+    }
+
+    input[type="text"] {
+      flex: 1;
+      background: #222;
+      border: 1px solid #444;
+      border-radius: 4px;
+      color: #eee;
+      padding: 4px 7px;
+      font-size: 12px;
+    }
+
+    input[type="text"]:focus { outline: 1px solid #4a9eff; border-color: #4a9eff; }
+
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+      font-size: 12px;
+      color: #ccc;
+    }
+
+    .checkbox-row input[type="checkbox"] {
+      width: 14px;
+      height: 14px;
+      accent-color: #4a9eff;
+    }
+
+    hr { border: none; border-top: 1px solid #333; margin: 10px 0; }
+
+    button {
+      width: 100%;
+      padding: 8px 12px;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    #btnDump {
+      background: #4a9eff;
+      color: #fff;
+    }
+
+    #btnDump:hover { background: #3a8eef; }
+    #btnDump:disabled { background: #2a5a99; color: #888; cursor: default; }
+
+    #btnActivity {
+      background: #444;
+      color: #ccc;
+      margin-top: 6px;
+    }
+
+    #btnActivity:hover { background: #555; }
+    #btnActivity:disabled { background: #333; color: #666; cursor: default; }
+
+    #status {
+      margin-top: 10px;
+      padding: 8px;
+      background: #1a1a1a;
+      border-radius: 4px;
+      font-size: 11px;
+      color: #aaa;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 160px;
+      overflow-y: auto;
+      display: none;
+    }
+
+    #status.visible { display: block; }
+
+    .result-ok  { color: #4caf50; font-weight: 600; }
+    .result-err { color: #f44336; font-weight: 600; }
+
+    .hint {
+      font-size: 10px;
+      color: #666;
+      margin-top: 6px;
+      line-height: 1.4;
+    }
+  </style>
+</head>
+<body>
+  <h1>🏈 LT Data Dump</h1>
+
+  <div class="row">
+    <label for="leagueId">League ID</label>
+    <input type="text" id="leagueId" placeholder="ce5UVtdRpYY9KWMyDweW" />
+  </div>
+  <div class="row">
+    <label for="season">Season</label>
+    <input type="text" id="season" placeholder="2026" />
+  </div>
+  <div class="row">
+    <label for="downloadDir">Download dir</label>
+    <input type="text" id="downloadDir" placeholder="lt_export (Fill in to create a subfolder in downloads for the export)" />
+  </div>
+
+  <hr />
+
+  <div class="checkbox-row">
+    <input type="checkbox" id="chkAllTeams" checked />
+    <label for="chkAllTeams" style="flex: 1; color: #ccc;">Dump all 10 team docs</label>
+  </div>
+
+  <button id="btnDump">⬇ Dump Only Roster Data</button>
+  <button id="btnActivity">📋 Dump Activity And Roster Data</button>
+
+  <div id="status"></div>
+
+  <p class="hint">
+    Files download to your Chrome downloads folder.<br />
+    Point Chrome → Settings → Downloads to a different folder for a one click data pipeline
+  </p>
+
+  <script src="popup.js"></script>
+</body>
+</html>
