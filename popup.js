@@ -5,21 +5,24 @@
  *
  * Lifecycle:
  *   1. On load: restore saved config from chrome.storage.local.
- *   2. User clicks a dump button → save config → send START_DUMP to service
- *      worker → disable buttons → stream DUMP_PROGRESS lines into #status.
- *   3. On DUMP_RESULT: re-enable buttons, colour-code the result line.
+ *   2. User selects data categories and clicks "Dump Selected" →
+ *      save config → send START_DUMP to service worker →
+ *      disable button → stream DUMP_PROGRESS lines into #status.
+ *   3. On DUMP_RESULT: re-enable button, colour-code the result line.
  *   4. Config changes (leagueId, season, downloadDir) are saved on blur.
  */
 
 // ─── Elements ─────────────────────────────────────────────────────────────────
 
-const leagueIdInput  = document.getElementById("leagueId");
-const seasonInput    = document.getElementById("season");
+const leagueIdInput    = document.getElementById("leagueId");
+const seasonInput      = document.getElementById("season");
 const downloadDirInput = document.getElementById("downloadDir");
-const chkAllTeams    = document.getElementById("chkAllTeams");
-const btnDump        = document.getElementById("btnDump");
-const btnActivity    = document.getElementById("btnActivity");
-const statusEl       = document.getElementById("status");
+const chkRoster        = document.getElementById("chkRoster");
+const chkActivity      = document.getElementById("chkActivity");
+const chkPlayerStats   = document.getElementById("chkPlayerStats");
+const chkSampleBio     = document.getElementById("chkSampleBio");
+const btnDump          = document.getElementById("btnDump");
+const statusEl         = document.getElementById("status");
 
 // ─── Config persistence ───────────────────────────────────────────────────────
 
@@ -68,17 +71,19 @@ function clearStatus() {
 
 // ─── Dump trigger ─────────────────────────────────────────────────────────────
 
-function startDump(activityDump = false) {
+function startDump() {
   saveConfig();
   clearStatus();
   setDisabled(true);
 
   const msg = {
-    type:        "START_DUMP",
-    leagueId:    leagueIdInput.value.trim() || undefined,
-    season:      seasonInput.value.trim()   || undefined,
-    allTeams:    chkAllTeams.checked,
-    activityDump,
+    type:             "START_DUMP",
+    leagueId:         leagueIdInput.value.trim() || undefined,
+    season:           seasonInput.value.trim()   || undefined,
+    rosterDump:       chkRoster.checked,
+    activityDump:     chkActivity.checked,
+    playerStatsDump:  chkPlayerStats.checked,
+    includeSampleBio: chkSampleBio.checked,
   };
 
   chrome.runtime.sendMessage(msg, (response) => {
@@ -90,12 +95,10 @@ function startDump(activityDump = false) {
 }
 
 function setDisabled(disabled) {
-  btnDump.disabled     = disabled;
-  btnActivity.disabled = disabled;
+  btnDump.disabled = disabled;
 }
 
-btnDump.addEventListener("click",     () => startDump(false));
-btnActivity.addEventListener("click", () => startDump(true));
+btnDump.addEventListener("click", startDump);
 
 // ─── Progress messages from service worker ────────────────────────────────────
 

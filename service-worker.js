@@ -5,8 +5,9 @@
  *   1. Receive "START_DUMP" messages from the popup.
  *   2. Ask the content script on the active LT tab for the Firebase token.
  *   3. Run the Firestore dump (mirrors scripts/lt_firestore_dump.py).
- *   4. Download each JSON file via chrome.downloads.download().
- *   5. Post progress + result messages back to the popup.
+ *   4. Collect all fetched JSON files in memory.
+ *   5. Bundle them into a single ZIP and download via chrome.downloads.download().
+ *   6. Post progress + result messages back to the popup.
  *
  * Firestore document set (same as lt_firestore_dump.py _doc_set()):
  *   - leagues/<id>/docs/extensionSalaries
@@ -23,15 +24,18 @@
  *   - leagues/<id>/freeAgentAuctionResults
  *   - leagues/<id>/moneyEvents/<teamId>  (per team)
  *
- * Output matches scripts/lt_firestore_dump.py exactly:
- *   - Pretty JSON, 2-space indent, keys sorted (mirrors json.dumps sort_keys=True)
- *   - One file per document, named <name>.json
- *   - Downloaded to Chrome's configured downloads folder.
- *     Point Chrome's downloads folder at data/raw/lt_firestore/ in the repo
- *     for seamless integration with run_pipe_10().
+ * Player stat docs (when playerStatsDump=true):
+ *   - seasons/<season>/playerArrays/playerSeasonStats
+ *   - seasons/<season>/playerArrays/playerSeasonProjections
+ *
+ * Output: a single lt_firestore_dump_<YYYY-MM-DD>.zip containing one JSON
+ * file per document.  File contents match scripts/lt_firestore_dump.py exactly:
+ * pretty JSON, 2-space indent, keys sorted (mirrors json.dumps sort_keys=True).
  */
 
 "use strict";
+
+import { createZip } from "./lib/zip.js";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -48,6 +52,13 @@ const ACTIVITY_COLLECTIONS = [
   "activityMessages",
   "transactions",
   "freeAgentAuctionResults",
+];
+
+// Per-player stat docs under seasons/<season>/playerArrays/.
+// Mirrors scripts/lt_firestore_dump.py _PLAYER_STATS_DOCS.
+const PLAYER_STATS_DOCS = [
+  "playerSeasonStats",        // LT's per-player PPG / stats used for PBS ranking
+  "playerSeasonProjections",  // LT's per-player projections (forward-looking)
 ];
 
 // ─── Firestore helpers ────────────────────────────────────────────────────────
@@ -163,46 +174,6 @@ function _sortKeys(val) {
   return val;
 }
 
-// ─── Download helper ──────────────────────────────────────────────────────────
-
-/**
- * Download one JSON document to Chrome's downloads folder.
- *
- * Chrome extensions cannot write directly to the filesystem.  Each file
- * is downloaded via chrome.downloads using a data: URL.
- *
- * Note: URL.createObjectURL() is NOT available in MV3 service workers
- * (they run in a non-DOM context).  data: URLs are the correct approach —
- * chrome.downloads.download() accepts them for any file size Chrome supports.
- *
- * To land files in the right repo location, configure Chrome's download
- * folder to point at <repo-root>/data/raw/lt_firestore/, or set the
- * "Download dir" field in the popup (stored in chrome.storage.local as
- * "downloadDir") to use a relative subdirectory.
- *
- * Returns the download id (or -1 on error) for progress tracking.
- */
-async function downloadJson(name, doc) {
-  const json = sortedStringify(doc);
-
-  // data: URL approach — works in MV3 service workers (no DOM context needed).
-  const dataUrl =
-    "data:application/json;charset=utf-8," + encodeURIComponent(json);
-
-  // Retrieve optional subdirectory prefix from extension storage.
-  const { downloadDir = "" } = await chrome.storage.local.get("downloadDir");
-  const filename = downloadDir
-    ? `${downloadDir.replace(/\/*$/, "")}/${name}.json`
-    : `${name}.json`;
-
-  return new Promise((resolve) => {
-    chrome.downloads.download(
-      { url: dataUrl, filename, saveAs: false },
-      (downloadId) => resolve(downloadId ?? -1)
-    );
-  });
-}
-
 // ─── Progress messaging ───────────────────────────────────────────────────────
 
 /** Send a progress update to the popup (if it's still open). */
@@ -265,18 +236,52 @@ async function getTokenFromContentScript() {
   });
 }
 
+// ─── Zip download ─────────────────────────────────────────────────────────────
+
+/**
+ * Download a ZIP as a single file to Chrome's downloads folder.
+ *
+ * Uses a base64 data: URL — the correct approach in MV3 service workers
+ * (URL.createObjectURL is not available without a DOM context).
+ */
+async function downloadZip(zipName, zipBytes) {
+  // Convert Uint8Array → binary string → base64 data URL.
+  let binary = "";
+  for (let i = 0; i < zipBytes.length; i++) {
+    binary += String.fromCharCode(zipBytes[i]);
+  }
+  const dataUrl = "data:application/zip;base64," + btoa(binary);
+
+  const { downloadDir = "" } = await chrome.storage.local.get("downloadDir");
+  const filename = downloadDir
+    ? `${downloadDir.replace(/\/*$/, "")}/${zipName}`
+    : zipName;
+
+  return new Promise((resolve) => {
+    chrome.downloads.download(
+      { url: dataUrl, filename, saveAs: false },
+      (downloadId) => resolve(downloadId ?? -1)
+    );
+  });
+}
+
 // ─── Core dump logic ──────────────────────────────────────────────────────────
 
 /**
  * Run the full Firestore dump.  Mirrors scripts/lt_firestore_dump.py.
  *
+ * All fetched documents are collected in memory and bundled as a single
+ * lt_firestore_dump_<YYYY-MM-DD>.zip at the end.
+ *
  * @param {object} opts
- * @param {string} opts.project      Firebase project id (default: figment-football)
- * @param {string} opts.leagueId     LT league id
- * @param {string} opts.season       Season year string (default: "2026")
- * @param {string} opts.samplePlayerId  Player id for the playerDetails sample
- * @param {boolean} opts.allTeams    Dump every team doc (vs just the sample)
- * @param {boolean} opts.activityDump  Also dump activity collections (CAP-05)
+ * @param {string}  opts.project         Firebase project id (default: figment-football)
+ * @param {string}  opts.leagueId        LT league id
+ * @param {string}  opts.season          Season year string (default: "2026")
+ * @param {string}  opts.samplePlayerId  Player id for the optional playerDetails sample
+ * @param {boolean} opts.rosterDump      Dump standard docs + all team docs (default: true)
+ * @param {boolean} opts.activityDump    Dump activity collections (CAP-05)
+ * @param {boolean} opts.playerStatsDump Dump per-player stat docs (mirrors --player-stats)
+ * @param {boolean} opts.includeSampleBio  Fetch one playerDetails doc as a diagnostic
  */
 async function runDump(opts = {}) {
   const {
@@ -284,31 +289,36 @@ async function runDump(opts = {}) {
     leagueId = DEFAULT_LEAGUE_ID,
     season = DEFAULT_SEASON,
     samplePlayerId = DEFAULT_SAMPLE_PLAYER_ID,
-    allTeams = true,
+    rosterDump = true,
     activityDump = false,
+    playerStatsDump = false,
+    includeSampleBio = false,
   } = opts;
 
   postProgress("Requesting Firebase token from LT tab…");
   const token = await getTokenFromContentScript();
-  postProgress("Token OK — starting Firestore dump.");
+  postProgress("Token OK — fetching Firestore documents.");
 
-  let saved = 0;
+  // All files collected here; downloaded as a single zip at the end.
+  const collectedFiles = new Map(); // filename (without .json) → Uint8Array
+  let fetched = 0;
   let errors = 0;
 
+  const encoder = new TextEncoder();
+
   /**
-   * Fetch one document and download it as <name>.json.
+   * Fetch one document and add it to the collection.
    *
    * @param {boolean} optional  When true, a 404 is logged as a warning
    *   (⚠) rather than an error (✗) and does not increment the error count.
-   *   Use for documents that legitimately may not exist in every league
-   *   (e.g. rfatenders — only present when the commissioner enables RFA).
    */
-  async function fetchAndSave(name, docPath, { optional = false } = {}) {
+  async function fetchAndCollect(name, docPath, { optional = false } = {}) {
     try {
       postProgress(`  Fetching ${name}…`);
       const doc = await getDoc(project, docPath, token);
-      await downloadJson(name, doc);
-      saved++;
+      const json = sortedStringify(doc);
+      collectedFiles.set(name + ".json", encoder.encode(json));
+      fetched++;
       postProgress(`  ✓ ${name}.json`);
     } catch (err) {
       if (optional && err.message.startsWith("404")) {
@@ -321,19 +331,18 @@ async function runDump(opts = {}) {
   }
 
   /**
-   * Fetch a collection listing and download it as <name>.json.
+   * Fetch a collection listing and add it to the collection.
    *
    * @param {boolean} optional  When true, a 403 is logged as a warning (⚠)
    *   rather than an error (✗) and does not increment the error count.
-   *   Use for collections that may be restricted to commissioner-level access
-   *   (e.g. trades — Firestore security rules vary by league).
    */
-  async function fetchCollectionAndSave(name, collectionPath, { optional = false } = {}) {
+  async function fetchCollectionAndCollect(name, collectionPath, { optional = false } = {}) {
     try {
       postProgress(`  Listing collection ${name}…`);
       const listing = await listCollection(project, collectionPath, token);
-      await downloadJson(name, listing);
-      saved++;
+      const json = sortedStringify(listing);
+      collectedFiles.set(name + ".json", encoder.encode(json));
+      fetched++;
       postProgress(`  ✓ ${name}.json (${listing.documents.length} docs)`);
     } catch (err) {
       if (optional && err.message.startsWith("HTTP 403")) {
@@ -345,39 +354,33 @@ async function runDump(opts = {}) {
     }
   }
 
-  // ── Standard 6-doc set (same as lt_firestore_dump.py default run) ──────────
+  // ── Roster / standard docs ────────────────────────────────────────────────
 
-  await fetchAndSave(
-    "extensionSalaries",
-    `leagues/${leagueId}/docs/extensionSalaries`
-  );
-  await fetchAndSave(
-    "positionOverrides",
-    `leagues/${leagueId}/docs/positionOverrides`
-  );
-  await fetchAndSave(
-    "rfatenders",
-    `leagues/${leagueId}/seasons/${season}/docs/rfatenders`,
-    { optional: true }   // only exists when commissioner enables RFA
-  );
-  await fetchAndSave(
-    "players_master",
-    `seasons/${season}/playerArrays/players`
-  );
-  await fetchAndSave(
-    "playerDetails_sample",
-    `playerDetails/${samplePlayerId}`
-  );
+  if (rosterDump) {
+    await fetchAndCollect(
+      "extensionSalaries",
+      `leagues/${leagueId}/docs/extensionSalaries`
+    );
+    await fetchAndCollect(
+      "positionOverrides",
+      `leagues/${leagueId}/docs/positionOverrides`
+    );
+    await fetchAndCollect(
+      "rfatenders",
+      `leagues/${leagueId}/seasons/${season}/docs/rfatenders`,
+      { optional: true }   // only exists when commissioner enables RFA
+    );
+    await fetchAndCollect(
+      "players_master",
+      `seasons/${season}/playerArrays/players`
+    );
 
-  // ── Team docs ──────────────────────────────────────────────────────────────
-
-  if (allTeams) {
     postProgress(`  Enumerating teams in league ${leagueId} season ${season}…`);
     try {
       const teams = await listTeams(project, leagueId, season, token);
       postProgress(`  Found ${teams.length} teams.`);
       for (const { teamId, label } of teams) {
-        await fetchAndSave(
+        await fetchAndCollect(
           `team_${teamId}`,
           `leagues/${leagueId}/seasons/${season}/teams/${teamId}`
         );
@@ -387,13 +390,18 @@ async function runDump(opts = {}) {
       errors++;
       postProgress(`  ✗ team enumeration: ${err.message}`);
     }
-  } else {
-    // Fallback: dump just the sample team doc (Kyle's own team is DEFAULT_SAMPLE_TEAM_ID
-    // in the Python script; keep as undefined here — user must configure if needed).
-    postProgress("  allTeams=false — skipping team docs.");
   }
 
-  // ── Activity collections (CAP-05) ─────────────────────────────────────────
+  // ── Sample player bio (diagnostic) ───────────────────────────────────────
+
+  if (includeSampleBio) {
+    await fetchAndCollect(
+      "playerDetails_sample",
+      `playerDetails/${samplePlayerId}`
+    );
+  }
+
+  // ── Activity collections (CAP-05) ────────────────────────────────────────
 
   // trades may be restricted to commissioner-level Firestore rules in some
   // leagues — treat a 403 as a warning so other collections still succeed.
@@ -402,7 +410,7 @@ async function runDump(opts = {}) {
   if (activityDump) {
     postProgress("  Fetching activity collections…");
     for (const name of ACTIVITY_COLLECTIONS) {
-      await fetchCollectionAndSave(name, `leagues/${leagueId}/${name}`, {
+      await fetchCollectionAndCollect(name, `leagues/${leagueId}/${name}`, {
         optional: OPTIONAL_ACTIVITY.has(name),
       });
     }
@@ -411,7 +419,7 @@ async function runDump(opts = {}) {
     try {
       const teams = await listTeams(project, leagueId, season, token);
       for (const { teamId } of teams) {
-        await fetchAndSave(
+        await fetchAndCollect(
           `moneyEvents_${teamId}`,
           `leagues/${leagueId}/moneyEvents/${teamId}`
         );
@@ -422,16 +430,34 @@ async function runDump(opts = {}) {
     }
   }
 
-  // ── Summary ────────────────────────────────────────────────────────────────
+  // ── Player stats (EXT-04 calibration inputs) ──────────────────────────────
 
-  const summary = `Done. ${saved} file(s) downloaded${errors ? `, ${errors} error(s)` : ""}.`;
+  if (playerStatsDump) {
+    postProgress("  Fetching per-player stat docs…");
+    for (const name of PLAYER_STATS_DOCS) {
+      await fetchAndCollect(name, `seasons/${season}/playerArrays/${name}`);
+    }
+  }
+
+  // ── Bundle and download ───────────────────────────────────────────────────
+
+  if (collectedFiles.size === 0) {
+    postResult(false, "No categories selected — nothing to dump.");
+    return;
+  }
+
+  postProgress(`  Bundling ${collectedFiles.size} file(s) into zip…`);
+  const files = Object.fromEntries(collectedFiles);
+  const zipBytes = createZip(files);
+  const today = new Date().toISOString().slice(0, 10);
+  const zipName = `lt_firestore_dump_${today}.zip`;
+  await downloadZip(zipName, zipBytes);
+
+  const summary = `Done. ${fetched} file(s) → ${zipName}${errors ? ` (${errors} error(s))` : ""}.`;
   postProgress(summary);
 
   if (errors > 0) {
-    postResult(
-      false,
-      `${summary} Check the progress log for which files failed.`
-    );
+    postResult(false, `${summary} Check the progress log for which files failed.`);
   } else {
     postResult(true, summary);
   }
@@ -449,8 +475,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       leagueId: message.leagueId || DEFAULT_LEAGUE_ID,
       season: message.season || DEFAULT_SEASON,
       samplePlayerId: message.samplePlayerId || DEFAULT_SAMPLE_PLAYER_ID,
-      allTeams: message.allTeams !== false,   // default true
+      rosterDump: message.rosterDump !== false,          // default true
       activityDump: message.activityDump === true,
+      playerStatsDump: message.playerStatsDump === true,
+      includeSampleBio: message.includeSampleBio === true,
     }).catch((err) => {
       postResult(false, `Unexpected error: ${err.message}`);
     });

@@ -1,25 +1,25 @@
 # League Tycoon Data Dump — Firestore Sync Chrome Extension
 
 Manifest V3 Chrome extension that dumps your League Tycoon Firestore data
-to local JSON files.
+to a single ZIP archive.
 
 ## What it does
 
 1. Reads your Firebase ID token from the page's IndexedDB on
    `app.leaguetycoon.com` — the same token LT uses for every request.
 2. Hits the Firestore REST API (`firestore.googleapis.com`) and fetches the
-   same documents the Python script fetches:
-   - `extensionSalaries.json` — LT calculated extensions
-   - `positionOverrides.json` — any league specific positional changes
-   - `rfatenders.json` — RFA tender prices
-   - `team_<teamId>.json` × 10 — every team's roster + contract state
-   - `players_master.json` — player id↔name mapping
-   - `playerDetails_sample.json` — sample bio fields from Bijan
-3. Downloads each file to Chrome's configured downloads folder.
-4. Optional "Dump Activity And Roster Data" button also fetches:
-   - `trades.json`, `activityMessages.json`, `transactions.json`,
-     `freeAgentAuctionResults.json`, `moneyEvents_<teamId>.json` × 10
-   - `trades.json` is only scoped for the commissioner permissions today, this data is availible in transactions but needs to be translated from ID's
+   selected data categories.
+3. Bundles all fetched files into a single `lt_firestore_dump_<date>.zip` and
+   downloads it via Chrome's configured downloads folder.
+
+### Data categories (popup checkboxes)
+
+| Category | Default | Files |
+|---|---|---|
+| Roster / standard docs | ✅ on | `extensionSalaries.json`, `positionOverrides.json`, `rfatenders.json`, `players_master.json`, `team_<id>.json` × 10 |
+| Activity | ✅ on | `trades.json`, `activityMessages.json`, `transactions.json`, `freeAgentAuctionResults.json`, `moneyEvents_<id>.json` × 10 |
+| Player stats & projections | ✅ on | `playerSeasonStats.json`, `playerSeasonProjections.json` |
+| Sample player bio | ☐ off | `playerDetails_sample.json` — diagnostic only |
 
 ## Installation Guide
 
@@ -53,9 +53,7 @@ downloads location.
 2. Click the extension icon in Chrome's toolbar
 3. Verify **League ID** and **Season** match your league  
    (defaults are the IDs from our league - BLB)
-4. Click **⬇ Dump Roster Data** to fetch all 10 team docs + meta docs
-
-Chrome will download each `.json` file.
+4. Click **⬇ Dump Selected** Chrome downloads a single `lt_firestore_dump_<date>.zip`.
 
 ## Token expiry
 
@@ -67,5 +65,12 @@ You do **not** need to manually copy/paste the token anywhere. The extension
 reads it automatically from the page's IndexedDB as long as you're signed in.
 
 ## Notes
+
 - time stamps are UTC
 - In transactions each object is a single asset, you can join by tradeID, team1 is the team sending the asset, team2 is receiving the asset
+
+## ZIP format
+
+The ZIP uses STORE mode (no compression). Files unzip instantly and the
+archive is created entirely in-browser — no server round-trip, no external
+library dependency.

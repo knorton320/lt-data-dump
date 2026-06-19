@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "League Tycoon Data Dump",
   "description": "Dumps your League Tycoon data to local JSON files for personal use.",
-  "version": "1.0.0",
+  "version": "1.0.1",
 
   "background": {
     "service_worker": "service-worker.js",
