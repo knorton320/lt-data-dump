@@ -30,7 +30,7 @@
       margin-bottom: 8px;
     }
 
-    label {
+    label.field-label {
       flex: 0 0 90px;
       font-size: 12px;
       color: #aaa;
@@ -48,19 +48,41 @@
 
     input[type="text"]:focus { outline: 1px solid #4a9eff; border-color: #4a9eff; }
 
+    .section-label {
+      font-size: 11px;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
     .checkbox-row {
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       gap: 8px;
-      margin-bottom: 6px;
+      margin-bottom: 5px;
       font-size: 12px;
       color: #ccc;
     }
 
     .checkbox-row input[type="checkbox"] {
+      flex: 0 0 14px;
       width: 14px;
       height: 14px;
+      margin-top: 1px;
       accent-color: #4a9eff;
+    }
+
+    .checkbox-row .label-text {
+      flex: 1;
+      line-height: 1.4;
+    }
+
+    .checkbox-row .sublabel {
+      display: block;
+      font-size: 10px;
+      color: #666;
+      margin-top: 1px;
     }
 
     hr { border: none; border-top: 1px solid #333; margin: 10px 0; }
@@ -73,6 +95,7 @@
       cursor: pointer;
       font-size: 13px;
       font-weight: 600;
+      margin-top: 10px;
     }
 
     #btnDump {
@@ -82,15 +105,6 @@
 
     #btnDump:hover { background: #3a8eef; }
     #btnDump:disabled { background: #2a5a99; color: #888; cursor: default; }
-
-    #btnActivity {
-      background: #444;
-      color: #ccc;
-      margin-top: 6px;
-    }
-
-    #btnActivity:hover { background: #555; }
-    #btnActivity:disabled { background: #333; color: #666; cursor: default; }
 
     #status {
       margin-top: 10px;
@@ -123,33 +137,58 @@
   <h1>🏈 LT Data Dump</h1>
 
   <div class="row">
-    <label for="leagueId">League ID</label>
+    <label class="field-label" for="leagueId">League ID</label>
     <input type="text" id="leagueId" placeholder="ce5UVtdRpYY9KWMyDweW" />
   </div>
   <div class="row">
-    <label for="season">Season</label>
+    <label class="field-label" for="season">Season</label>
     <input type="text" id="season" placeholder="2026" />
   </div>
   <div class="row">
-    <label for="downloadDir">Download dir</label>
+    <label class="field-label" for="downloadDir">Download dir</label>
     <input type="text" id="downloadDir" placeholder="lt_export (Fill in to create a subfolder in downloads for the export)" />
   </div>
 
   <hr />
 
+  <div class="section-label">Data categories</div>
+
   <div class="checkbox-row">
-    <input type="checkbox" id="chkAllTeams" checked />
-    <label for="chkAllTeams" style="flex: 1; color: #ccc;">Dump all 10 team docs</label>
+    <input type="checkbox" id="chkRoster" checked />
+    <span class="label-text">
+      Roster / standard docs
+      <span class="sublabel">extensionSalaries, positionOverrides, rfatenders, players_master, team_* × 10</span>
+    </span>
+  </div>
+  <div class="checkbox-row">
+    <input type="checkbox" id="chkActivity" checked />
+    <span class="label-text">
+      Activity
+      <span class="sublabel">trades, activityMessages, transactions, freeAgentAuctionResults, moneyEvents_* × 10</span>
+    </span>
+  </div>
+  <div class="checkbox-row">
+    <input type="checkbox" id="chkPlayerStats" checked />
+    <span class="label-text">
+      Player stats &amp; projections
+      <span class="sublabel">playerSeasonStats, playerSeasonProjections</span>
+    </span>
+  </div>
+  <div class="checkbox-row">
+    <input type="checkbox" id="chkSampleBio" />
+    <span class="label-text">
+      Sample player bio
+      <span class="sublabel">playerDetails_sample — diagnostic only</span>
+    </span>
   </div>
 
-  <button id="btnDump">⬇ Dump Only Roster Data</button>
-  <button id="btnActivity">📋 Dump Activity And Roster Data</button>
+  <button id="btnDump">⬇ Dump Selected</button>
 
   <div id="status"></div>
 
   <p class="hint">
-    Files download to your Chrome downloads folder.<br />
-    Point Chrome → Settings → Downloads to a different folder for a one click data pipeline
+    Downloads a single <code>lt_firestore_dump_&lt;date&gt;.zip</code>.<br />
+    Unzip it into your data folder for a one click data pipeline.
   </p>
 
   <script src="popup.js"></script>
