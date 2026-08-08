@@ -40,9 +40,8 @@ import { createZip } from "./lib/zip.js";
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const DEFAULT_PROJECT_ID = "figment-football";
-const DEFAULT_LEAGUE_ID = "ce5UVtdRpYY9KWMyDweW";
 const DEFAULT_SEASON = "2026";
-const DEFAULT_SAMPLE_PLAYER_ID = "23189"; // Bijan Robinson
+const DEFAULT_SAMPLE_PLAYER_ID = "25907"; // Bijan Robinson — confirmed by HAR
 
 const FIRESTORE_BASE = (project) =>
   `https://firestore.googleapis.com/v1/projects/${project}/databases/(default)/documents`;
@@ -195,10 +194,11 @@ function postResult(success, text) {
 // ─── Token retrieval ──────────────────────────────────────────────────────────
 
 /**
- * Ask the content script on the active LT tab for the Firebase token.
- * Returns the token string or throws if no active LT tab / token unavailable.
+ * Send a message to the content script on the active LT tab and return its
+ * response. Shared by the dump-token path and the credential-reveal path —
+ * both need "find the LT tab, relay a message, surface a clear error."
  */
-async function getTokenFromContentScript() {
+async function sendToContentScript(messageType) {
   const tabs = await chrome.tabs.query({ url: "https://app.leaguetycoon.com/*" });
 
   if (!tabs.length) {
@@ -213,7 +213,7 @@ async function getTokenFromContentScript() {
   const tab = tabs.find((t) => t.active) || tabs[0];
 
   return new Promise((resolve, reject) => {
-    chrome.tabs.sendMessage(tab.id, { type: "GET_FIREBASE_TOKEN" }, (response) => {
+    chrome.tabs.sendMessage(tab.id, { type: messageType }, (response) => {
       if (chrome.runtime.lastError) {
         reject(
           new Error(
@@ -231,9 +231,27 @@ async function getTokenFromContentScript() {
         reject(new Error(response.error));
         return;
       }
-      resolve(response.token);
+      resolve(response);
     });
   });
+}
+
+/**
+ * Ask the content script on the active LT tab for the Firebase token.
+ * Returns the token string or throws if no active LT tab / token unavailable.
+ */
+async function getTokenFromContentScript() {
+  const response = await sendToContentScript("GET_FIREBASE_TOKEN");
+  return response.token;
+}
+
+/**
+ * Ask the content script for the full auth-token triple (ID + refresh +
+ * expiry) — used by the popup's Credentials reveal UI. Unlike the dump
+ * path, this does not reject on an expired ID token.
+ */
+async function getAuthTokensFromContentScript() {
+  return sendToContentScript("GET_AUTH_TOKENS");
 }
 
 // ─── Zip download ─────────────────────────────────────────────────────────────
@@ -275,7 +293,7 @@ async function downloadZip(zipName, zipBytes) {
  *
  * @param {object} opts
  * @param {string}  opts.project         Firebase project id (default: figment-football)
- * @param {string}  opts.leagueId        LT league id
+ * @param {string}  opts.leagueId        LT league id — required, no default
  * @param {string}  opts.season          Season year string (default: "2026")
  * @param {string}  opts.samplePlayerId  Player id for the optional playerDetails sample
  * @param {boolean} opts.rosterDump      Dump standard docs + all team docs (default: true)
@@ -286,7 +304,7 @@ async function downloadZip(zipName, zipBytes) {
 async function runDump(opts = {}) {
   const {
     project = DEFAULT_PROJECT_ID,
-    leagueId = DEFAULT_LEAGUE_ID,
+    leagueId = "",
     season = DEFAULT_SEASON,
     samplePlayerId = DEFAULT_SAMPLE_PLAYER_ID,
     rosterDump = true,
@@ -294,6 +312,16 @@ async function runDump(opts = {}) {
     playerStatsDump = false,
     includeSampleBio = false,
   } = opts;
+
+  if (!leagueId) {
+    postResult(
+      false,
+      "League ID is required — enter your League Tycoon league ID in the " +
+        "popup before dumping. (Find it in the URL bar while on your LT " +
+        "league page.)"
+    );
+    return;
+  }
 
   postProgress("Requesting Firebase token from LT tab…");
   const token = await getTokenFromContentScript();
@@ -472,7 +500,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
     runDump({
       project: message.project || DEFAULT_PROJECT_ID,
-      leagueId: message.leagueId || DEFAULT_LEAGUE_ID,
+      leagueId: message.leagueId || "",
       season: message.season || DEFAULT_SEASON,
       samplePlayerId: message.samplePlayerId || DEFAULT_SAMPLE_PLAYER_ID,
       rosterDump: message.rosterDump !== false,          // default true
@@ -484,6 +512,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     });
 
     return false; // synchronous response already sent
+  }
+
+  if (message.type === "GET_AUTH_TOKENS") {
+    getAuthTokensFromContentScript()
+      .then((tokens) => sendResponse(tokens))
+      .catch((err) => sendResponse({ error: err.message }));
+    return true;
   }
 
   if (message.type === "GET_CONFIG") {

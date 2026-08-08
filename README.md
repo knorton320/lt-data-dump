@@ -51,9 +51,9 @@ downloads location.
 
 1. Go to `https://app.leaguetycoon.com` and sign in
 2. Click the extension icon in Chrome's toolbar
-3. Verify **League ID** and **Season** match your league  
-   (defaults are the IDs from our league - BLB)
-4. Click **⬇ Dump Selected** Chrome downloads a single `lt_firestore_dump_<date>.zip`.
+3. Enter your **League ID** and **Season** — the League ID field has no
+   default, so a blank dump errors clearly instead of pulling the wrong league
+4. Click **⬇ Dump Selected** — Chrome downloads a single `lt_firestore_dump_<date>.zip`.
 
 ## Token expiry
 
@@ -63,6 +63,37 @@ retry — the Firebase SDK auto-refreshes the token on page load.
 
 You do **not** need to manually copy/paste the token anywhere. The extension
 reads it automatically from the page's IndexedDB as long as you're signed in.
+
+## Credentials — reveal-and-copy tokens
+
+Below the dump controls, a **Credentials** section can reveal either of the
+two Firebase tokens the extension already reads for the dump itself — useful
+for setting up something else that needs LT auth (e.g. an MCP server or other
+automation) without the old dev-tools/IndexedDB dance.
+
+| | **🔑 Show ID token** | **🔒 Show refresh token** |
+|---|---|---|
+| Lifetime | ~60 min | Until sign-out or password change |
+| Use for | A quick curl, debugging, a short trial run | Persistent automation (MCP server, scheduled refresh) |
+| If leaked | Expires within the hour on its own | Durable account access until explicitly revoked |
+
+**Prefer the ID token for anything short-lived.** Reserve the refresh token
+for setups that genuinely need to self-mint — it's a durable credential, and
+the popup's warning text says so.
+
+Behavior:
+- Nothing renders until its button is clicked — an incidental screenshot of
+  the normal dump flow won't capture either token.
+- Each revealed value gets a **Copy** button and a **Hide** button.
+- Auto-hides after ~60 seconds, or immediately when you close the popup
+  (Chrome discards the popup's DOM on close, so there's nothing to persist).
+- The ID token shows its expiry in human terms; if it's already expired, the
+  refresh token is still revealable — an expired ID token says nothing about
+  the refresh token's validity.
+- If no signed-in League Tycoon session is found, the popup says so plainly
+  instead of showing an empty field.
+- Neither token is logged to the console, written to `chrome.storage`, or sent
+  anywhere — this is purely a client-side clipboard convenience.
 
 ## Notes
 
