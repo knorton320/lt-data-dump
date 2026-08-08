@@ -20,7 +20,7 @@ const assert = require("assert").strict;
 //  here. Any change to these functions in the source files must be reflected.)
 
 const DEFAULT_PROJECT_ID = "figment-football";
-const DEFAULT_LEAGUE_ID  = "ce5UVtdRpYY9KWMyDweW";
+const DEFAULT_LEAGUE_ID  = "your-league-id";
 const DEFAULT_SEASON     = "2026";
 
 const FIRESTORE_BASE = (project) =>
@@ -168,6 +168,46 @@ function createZip(files) {
   ]);
 }
 
+// Auth-token extraction (mirrors content.js _extractAuthUserTokens/_isExpired)
+function _extractAuthUserTokens(entries) {
+  for (const entry of entries) {
+    const key = entry.fbase_key || entry.key || "";
+    if (!key.startsWith("firebase:authUser:")) continue;
+
+    const authUser = entry.value;
+    if (!authUser || typeof authUser !== "object") continue;
+
+    const tokenMgr = authUser.stsTokenManager;
+    if (!tokenMgr || !tokenMgr.accessToken) continue;
+
+    return {
+      accessToken: tokenMgr.accessToken,
+      refreshToken: tokenMgr.refreshToken || null,
+      expirationTime: Number(tokenMgr.expirationTime) || 0,
+    };
+  }
+  throw new Error(
+    'No firebase:authUser entry found in IndexedDB. ' +
+      "Make sure you're signed in to League Tycoon (app.leaguetycoon.com)."
+  );
+}
+
+function _isExpired(expirationTime) {
+  return Boolean(expirationTime) && Date.now() > expirationTime;
+}
+
+// Expiry formatting (mirrors popup.js formatExpiry)
+function formatExpiry(expirationTime) {
+  const ms = Number(expirationTime) || 0;
+  if (!ms) return { text: "expiry unknown", expired: false };
+  const deltaMs = ms - Date.now();
+  if (deltaMs <= 0) {
+    return { text: "expired — reload the LT page to refresh", expired: true };
+  }
+  const mins = Math.round(deltaMs / 60000);
+  return { text: mins < 1 ? "expires in <1 min" : `expires in ${mins} min`, expired: false };
+}
+
 // Category selection helper (mirrors popup.js startDump message building)
 function buildDumpMessage({ rosterChecked, activityChecked, playerStatsChecked, bioChecked }) {
   return {
@@ -257,7 +297,7 @@ test("Firestore typed-value shape — extensionSalaries sample", () => {
       playerSalaries: {
         arrayValue: {
           values: [
-            { mapValue: { fields: { playerID: { integerValue: "23189" }, extensionSalary: { integerValue: "49" } } } },
+            { mapValue: { fields: { playerID: { integerValue: "25907" }, extensionSalary: { integerValue: "49" } } } },
           ],
         },
       },
@@ -325,14 +365,14 @@ test("extracts teamId from Firestore doc name", () => {
     documents: [
       {
         name: "projects/figment-football/databases/(default)/documents/leagues/abc/seasons/2026/teams/teamId123",
-        fields: { name: { stringValue: "That One Egg Was 40 Yards" } },
+        fields: { name: { stringValue: "Sample Team" } },
       },
     ],
   };
   const teams = parseTeamsFromListing(listing);
   assert.strictEqual(teams.length, 1);
   assert.strictEqual(teams[0].teamId, "teamId123");
-  assert.strictEqual(teams[0].label, "That One Egg Was 40 Yards");
+  assert.strictEqual(teams[0].label, "Sample Team");
 });
 
 test("falls back to teamId when name field absent", () => {
@@ -763,6 +803,157 @@ test("combined roster + activity produces all expected files", () => {
   assert.strictEqual(manifest.length, 3);
   assert.ok(manifest.includes("extensionSalaries.json"));
   assert.ok(manifest.includes("trades.json"));
+});
+
+// ─── _extractAuthUserTokens / _isExpired (EXT-556 credential reveal) ─────────
+
+console.log("\n_extractAuthUserTokens — single reader, both callers");
+
+function makeAuthUserEntry({ accessToken, refreshToken, expirationTime }) {
+  return {
+    fbase_key: "firebase:authUser:AIzaSyBmmXw_T84cWhbUU6NztpGECjvtH9YBgeI:[DEFAULT]",
+    value: {
+      stsTokenManager: { accessToken, refreshToken, expirationTime },
+    },
+  };
+}
+
+test("extracts accessToken, refreshToken, and expirationTime together", () => {
+  const entries = [makeAuthUserEntry({
+    accessToken: "id-token-abc",
+    refreshToken: "refresh-token-xyz",
+    expirationTime: Date.now() + 3_600_000,
+  })];
+  const tokens = _extractAuthUserTokens(entries);
+  assert.strictEqual(tokens.accessToken, "id-token-abc");
+  assert.strictEqual(tokens.refreshToken, "refresh-token-xyz");
+  assert.ok(tokens.expirationTime > Date.now());
+});
+
+test("expired ID token is still extracted — extraction never rejects on expiry", () => {
+  const entries = [makeAuthUserEntry({
+    accessToken: "expired-id-token",
+    refreshToken: "still-valid-refresh-token",
+    expirationTime: Date.now() - 3_600_000, // an hour in the past
+  })];
+  const tokens = _extractAuthUserTokens(entries);
+  assert.strictEqual(tokens.accessToken, "expired-id-token");
+  assert.strictEqual(tokens.refreshToken, "still-valid-refresh-token");
+  assert.ok(_isExpired(tokens.expirationTime), "sanity: this expirationTime should read as expired");
+});
+
+test("refreshToken is null (not undefined) when absent from stsTokenManager", () => {
+  const entries = [{
+    fbase_key: "firebase:authUser:abc:[DEFAULT]",
+    value: { stsTokenManager: { accessToken: "id-token-only" } },
+  }];
+  const tokens = _extractAuthUserTokens(entries);
+  assert.strictEqual(tokens.refreshToken, null);
+});
+
+test("throws when no firebase:authUser entry is present", () => {
+  assert.throws(() => _extractAuthUserTokens([{ fbase_key: "some:other:key", value: {} }]), /No firebase:authUser entry found/);
+});
+
+test("throws on empty entries list (not signed in)", () => {
+  assert.throws(() => _extractAuthUserTokens([]), /No firebase:authUser entry found/);
+});
+
+test("skips entries with no stsTokenManager.accessToken", () => {
+  const entries = [
+    { fbase_key: "firebase:authUser:a:[DEFAULT]", value: { stsTokenManager: {} } },
+    makeAuthUserEntry({ accessToken: "the-real-one", refreshToken: "r", expirationTime: 0 }),
+  ];
+  const tokens = _extractAuthUserTokens(entries);
+  assert.strictEqual(tokens.accessToken, "the-real-one");
+});
+
+console.log("\n_isExpired — shared expiry check (dump path + reveal UI)");
+
+test("expirationTime in the future is not expired", () => {
+  assert.strictEqual(_isExpired(Date.now() + 60_000), false);
+});
+
+test("expirationTime in the past is expired", () => {
+  assert.strictEqual(_isExpired(Date.now() - 1), true);
+});
+
+test("falsy/zero expirationTime (unknown) is treated as not expired", () => {
+  assert.strictEqual(_isExpired(0), false);
+  assert.strictEqual(_isExpired(undefined), false);
+});
+
+// ─── formatExpiry — popup.js ID-token expiry display ─────────────────────────
+
+console.log("\nformatExpiry — human-readable ID token expiry");
+
+test("future expiry renders 'expires in N min'", () => {
+  const { text, expired } = formatExpiry(Date.now() + 43 * 60_000);
+  assert.ok(/expires in \d+ min/.test(text), text);
+  assert.strictEqual(expired, false);
+});
+
+test("past expiry renders the expired message and expired=true", () => {
+  const { text, expired } = formatExpiry(Date.now() - 60_000);
+  assert.strictEqual(text, "expired — reload the LT page to refresh");
+  assert.strictEqual(expired, true);
+});
+
+test("unknown (0) expiry renders a neutral message, not a false expired claim", () => {
+  const { text, expired } = formatExpiry(0);
+  assert.strictEqual(text, "expiry unknown");
+  assert.strictEqual(expired, false);
+});
+
+test("sub-minute future expiry renders '<1 min', not '0 min'", () => {
+  const { text } = formatExpiry(Date.now() + 5_000);
+  assert.strictEqual(text, "expires in <1 min");
+});
+
+// ─── Expired-ID-token-but-valid-refresh-token integration case ──────────────
+
+console.log("\nExpired ID token must not block revealing the refresh token");
+
+test("end-to-end: expired ID token extraction still yields a usable refresh token for the reveal UI", () => {
+  const entries = [makeAuthUserEntry({
+    accessToken: "expired-id-token",
+    refreshToken: "durable-refresh-token",
+    expirationTime: Date.now() - 10_000,
+  })];
+
+  // This is what readAuthTokens()/GET_AUTH_TOKENS hands the popup — no
+  // expiry check happens here, unlike getFirebaseToken()'s dump path.
+  const tokens = _extractAuthUserTokens(entries);
+  assert.ok(_isExpired(tokens.expirationTime), "the ID token in this fixture must actually be expired");
+  assert.strictEqual(tokens.refreshToken, "durable-refresh-token", "refresh token must still be present and usable");
+
+  const idExpiry = formatExpiry(tokens.expirationTime);
+  assert.strictEqual(idExpiry.expired, true, "ID-token panel should render the expired state");
+});
+
+// ─── League ID — no hardcoded default (service-worker.js) ───────────────────
+
+console.log("\nLeague ID — blank input must error, never silently fall back");
+
+// Mirrors the validation now inlined in service-worker.js runDump(): no
+// DEFAULT_LEAGUE_ID constant exists anymore, so a missing/blank leagueId
+// must be caught explicitly rather than defaulting to anyone's real league.
+function resolveLeagueIdOrThrow(leagueId) {
+  if (!leagueId) {
+    throw new Error(
+      "League ID is required — enter your League Tycoon league ID in the popup before dumping."
+    );
+  }
+  return leagueId;
+}
+
+test("blank league ID throws instead of resolving to a default", () => {
+  assert.throws(() => resolveLeagueIdOrThrow(""), /League ID is required/);
+  assert.throws(() => resolveLeagueIdOrThrow(undefined), /League ID is required/);
+});
+
+test("a real league ID passes through unchanged", () => {
+  assert.strictEqual(resolveLeagueIdOrThrow("someLeagueId123"), "someLeagueId123");
 });
 
 // ─── Summary ──────────────────────────────────────────────────────────────────

@@ -131,6 +131,66 @@
       margin-top: 6px;
       line-height: 1.4;
     }
+
+    .cred-block { margin-bottom: 8px; }
+
+    .cred-btn {
+      background: #333;
+      color: #eee;
+      margin-top: 6px;
+    }
+    .cred-btn:hover { background: #3f3f3f; }
+
+    .cred-panel {
+      margin-top: 6px;
+      padding: 8px;
+      background: #1a1a1a;
+      border-radius: 4px;
+      border: 1px solid #333;
+    }
+
+    .cred-warning {
+      font-size: 10px;
+      color: #999;
+      line-height: 1.4;
+      margin-bottom: 6px;
+    }
+
+    .cred-warning-strong {
+      color: #ffb74d;
+    }
+
+    .cred-expiry {
+      font-size: 10px;
+      color: #4caf50;
+      margin-bottom: 6px;
+    }
+
+    .cred-expiry.expired { color: #f44336; }
+
+    .cred-row {
+      display: flex;
+      gap: 6px;
+    }
+
+    .cred-row input[type="text"] {
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+      font-size: 10px;
+    }
+
+    .cred-row button {
+      width: auto;
+      flex: 0 0 auto;
+      margin-top: 0;
+      padding: 4px 8px;
+      font-size: 11px;
+    }
+
+    .cred-error {
+      margin-top: 6px;
+      font-size: 11px;
+      color: #f44336;
+    }
   </style>
 </head>
 <body>
@@ -138,7 +198,7 @@
 
   <div class="row">
     <label class="field-label" for="leagueId">League ID</label>
-    <input type="text" id="leagueId" placeholder="ce5UVtdRpYY9KWMyDweW" />
+    <input type="text" id="leagueId" placeholder="your-league-id" />
   </div>
   <div class="row">
     <label class="field-label" for="season">Season</label>
@@ -189,6 +249,51 @@
   <p class="hint">
     Downloads a single <code>lt_firestore_dump_&lt;date&gt;.zip</code>.<br />
     Unzip it into your data folder for a one click data pipeline.
+  </p>
+
+  <hr />
+
+  <div class="section-label">Credentials</div>
+
+  <div class="cred-block">
+    <button id="btnShowIdToken" class="cred-btn" type="button">🔑 Show ID token</button>
+    <div id="idTokenPanel" class="cred-panel" hidden>
+      <div class="cred-warning">
+        Short-lived (~60 min). Good for a quick curl, debugging, or a short
+        trial run — recommended over the refresh token unless you're setting
+        up something persistent.
+      </div>
+      <div id="idTokenExpiry" class="cred-expiry"></div>
+      <div class="cred-row">
+        <input type="text" id="idTokenValue" readonly />
+        <button id="btnCopyIdToken" type="button">Copy</button>
+        <button id="btnHideIdToken" type="button">Hide</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="cred-block">
+    <button id="btnShowRefreshToken" class="cred-btn" type="button">🔒 Show refresh token</button>
+    <div id="refreshTokenPanel" class="cred-panel" hidden>
+      <div class="cred-warning cred-warning-strong">
+        This is a long-lived credential for your League Tycoon account. It
+        grants the same access you have, including the ability to make
+        roster moves. Don't paste it into a chat, screenshot it, or share
+        it. It stays valid until you sign out or change your password.
+      </div>
+      <div class="cred-row">
+        <input type="text" id="refreshTokenValue" readonly />
+        <button id="btnCopyRefreshToken" type="button">Copy</button>
+        <button id="btnHideRefreshToken" type="button">Hide</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="credError" class="cred-error" hidden></div>
+
+  <p class="hint">
+    Nothing above renders until you click its button. Both auto-hide after
+    ~60s or when you close this popup, whichever comes first.
   </p>
 
   <script src="popup.js"></script>
