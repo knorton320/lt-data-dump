@@ -171,11 +171,15 @@
     .cred-row {
       display: flex;
       gap: 6px;
+      min-width: 0;
     }
 
     .cred-row input[type="text"] {
       font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
       font-size: 10px;
+      flex: 1 1 auto;
+      min-width: 0;
+      width: 100%;
     }
 
     .cred-row button {

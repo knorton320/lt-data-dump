@@ -1,6 +1,6 @@
 /**
  * Unit tests for Chrome extension pure-logic functions.
- * Run with:  node apps/chrome-extension/test_extension_logic.js
+ * Run with:  node test_extension_logic.js
  *
  * Tests the functions that can be verified without a browser:
  *   - sortedStringify  — must match Python json.dumps(sort_keys=True, indent=2)
@@ -954,6 +954,180 @@ test("blank league ID throws instead of resolving to a default", () => {
 
 test("a real league ID passes through unchanged", () => {
   assert.strictEqual(resolveLeagueIdOrThrow("someLeagueId123"), "someLeagueId123");
+});
+
+// ─── Credential-row width fix (#612) — popup.html CSS regression guard ──────
+//
+// The reveal buttons put a ~200-char Firebase token into a flex-row
+// <input readonly>. A flex item's default `min-width: auto` refuses to
+// shrink below its content-based minimum, which can blow the popup out
+// past its declared 340px body width — the real-Chrome-popup-auto-sizing
+// failure mode #612 reported ("much wider than the actual text"). The
+// fix is `min-width: 0` on the flex container *and* the input, standard
+// for this class of bug. Verified live in this session (Playwright,
+// headless Chromium, not committed as a repo dependency — see PR notes):
+// document.body stayed exactly 340px with a 205-char ID token and a
+// 157-char refresh token both revealed simultaneously, before vs. after
+// this CSS change. This test is the cheap, dependency-free regression
+// guard: assert the fix stays in the source so a future edit to
+// popup.html can't silently drop it.
+
+console.log("\nCredential-row width fix (#612) — CSS present in popup.html");
+
+const fs = require("fs");
+const path = require("path");
+const _popupHtml = fs.readFileSync(
+  path.join(__dirname, "popup.html"),
+  "utf8"
+);
+
+function _cssBlock(html, selector) {
+  const idx = html.indexOf(selector);
+  assert.ok(idx !== -1, `selector ${JSON.stringify(selector)} not found in popup.html`);
+  const braceStart = html.indexOf("{", idx);
+  const braceEnd = html.indexOf("}", braceStart);
+  return html.slice(braceStart + 1, braceEnd);
+}
+
+test(".cred-row is a min-width:0 flex container (lets children shrink instead of forcing overflow)", () => {
+  const block = _cssBlock(_popupHtml, ".cred-row {");
+  assert.match(block, /display:\s*flex/);
+  assert.match(block, /min-width:\s*0/);
+});
+
+test('.cred-row input[type="text"] has min-width:0 + flex:1 1 auto so a long token cannot widen the popup', () => {
+  const block = _cssBlock(_popupHtml, '.cred-row input[type="text"] {');
+  assert.match(block, /min-width:\s*0/, "missing min-width:0 — the flex-overflow fix from #612");
+  assert.match(block, /flex:\s*1\s+1\s+auto/, "missing flex:1 1 auto — input should fill, not overflow, the row");
+  assert.match(block, /width:\s*100%/);
+});
+
+test("body keeps its declared 340px width (the popup's contract) alongside the fix", () => {
+  const block = _cssBlock(_popupHtml, "body {");
+  assert.match(block, /width:\s*340px/);
+});
+
+test("token inputs stay readonly + not truncated by CSS (no text-overflow: ellipsis / overflow: hidden on the value)", () => {
+  // AC: "Overflow/scroll within the input, not truncation of its content."
+  // Guard against a future fix that reaches for text-overflow:ellipsis
+  // instead of min-width:0 — that would hide part of the token value.
+  const block = _cssBlock(_popupHtml, '.cred-row input[type="text"] {');
+  assert.doesNotMatch(block, /text-overflow/);
+});
+
+// ─── Public-mirror leak guard (#556) ─────────────────────────────────────────
+//
+// This repo is a public mirror of a private one. A short list of values must
+// never cross over: the league id, the owner's and team's names, the private
+// repo's slug and internal paths. Those genericizations live only in this
+// working tree — there is no CI relationship between the two repos — so the
+// delta used to be maintained by memory alone, and it regressed at least once
+// (a port clobbered an already-sanitized value and it had to be re-applied by
+// hand). This is the enforcement: every shipped file, every test run.
+//
+// The identifying values are stored base64-encoded rather than in plaintext.
+// A guard that hardcodes the very names it forbids would leak them itself and
+// make this file greppable for exactly what it exists to protect.
+//
+// Deliberately NOT flagged — each would fire on legitimate content:
+//   - "#<number>" ticket refs: private ticket numbers ride along in ported
+//     code comments and are tolerated (see the #612 block above).
+//   - Player ids (e.g. 25907): LT platform-wide ids for public NFL players.
+//     They identify no league, team, or owner, and a bare 5-digit number
+//     would false-positive on timestamps, row counts, and cap figures.
+//   - "figment-football" and the AIzaSy... Firebase web API key: public
+//     project identifiers, not secrets.
+//   - "League Tycoon": the product name. Note it contains the substring
+//     "our League", so the league-nickname pattern is word-anchored instead
+//     of matching loose prose.
+
+console.log("\nPublic-mirror leak guard (#556)");
+
+const _dec = (b64) => Buffer.from(b64, "base64").toString("utf8");
+const _frag = (...parts) => parts.join("");
+
+// Stripped before scanning — legitimate occurrences.
+const _GUARD_ALLOWED = [
+  _frag("knor", "ton") + "320/lt-data-dump", // this repo's own clone URL
+];
+
+const _GUARD_PATTERNS = [
+  { label: "private league id",        sub: _dec("Y2U1VVZ0ZFJwWVk5S1dNeUR3ZVc=") },
+  { label: "league owner name",        sub: _dec("S3lsZSBOb3J0b24=") },
+  { label: "league team name",         sub: _dec("VGhhdCBPbmUgRWdnIFdhcyA0MCBZYXJkcw==") },
+  { label: "private league nickname",  re: new RegExp(`\\b${_dec("QkxC")}\\b`) },
+  { label: "private repo slug",        sub: _frag("league", "-tycoon") },
+  { label: "private repo path",        sub: _frag("apps/chrome", "-extension") },
+  { label: "private product branding", sub: _frag("GM", " Suite") },
+  { label: "private pipeline path",    sub: _frag("data/raw/", "lt_firestore") },
+  { label: "private pipeline helper",  re: new RegExp(_frag("run_pipe", "_\\d+")) },
+  { label: "private github user",      sub: _frag("knor", "ton") },
+  {
+    label: "private-range IP",
+    re: /\b(?:10\.\d{1,3}|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}\b/,
+  },
+];
+
+const _GUARD_EXTS = new Set([".js", ".html", ".json", ".md"]);
+
+function _guardFiles(dir = __dirname, rel = "") {
+  const out = [];
+  for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (ent.name.startsWith(".") || ent.name === "node_modules") continue;
+    const abs = path.join(dir, ent.name);
+    const r = rel ? `${rel}/${ent.name}` : ent.name;
+    if (ent.isDirectory()) out.push(..._guardFiles(abs, r));
+    else if (_GUARD_EXTS.has(path.extname(ent.name))) out.push({ rel: r, abs });
+  }
+  return out;
+}
+
+const _GUARD_FILES = _guardFiles();
+
+test("leak guard has files to scan (an empty scan would pass forever, silently)", () => {
+  for (const name of ["popup.html", "popup.js", "service-worker.js", "content.js", "README.md", "manifest.json"]) {
+    assert.ok(
+      _GUARD_FILES.some((f) => f.rel === name),
+      `${name} is missing from the guard's scan set`
+    );
+  }
+});
+
+for (const { label, sub, re } of _GUARD_PATTERNS) {
+  test(`no ${label} in any shipped file`, () => {
+    const hits = [];
+    for (const { rel, abs } of _GUARD_FILES) {
+      let content = fs.readFileSync(abs, "utf8");
+      for (const allowed of _GUARD_ALLOWED) content = content.split(allowed).join("");
+      content.split("\n").forEach((line, i) => {
+        if (sub ? line.includes(sub) : re.test(line)) hits.push(`${rel}:${i + 1}`);
+      });
+    }
+    assert.deepStrictEqual(hits, [], `${label} found at ${hits.join(", ")}`);
+  });
+}
+
+// ── Delta guards ────────────────────────────────────────────────────────────
+// Assert the *shape* rather than pinning the exact private value: a real LT
+// league id is 20 base62 characters, and "your-league-id" fails that by
+// design. This keeps catching real ids even if the private one ever changes.
+
+const _looksLikeRealLeagueId = (v) => /^[A-Za-z0-9]{20}$/.test(v);
+
+test("DEFAULT_LEAGUE_ID here is a placeholder, not a real league id", () => {
+  assert.ok(
+    !_looksLikeRealLeagueId(DEFAULT_LEAGUE_ID),
+    `DEFAULT_LEAGUE_ID has the shape of a real league id: ${DEFAULT_LEAGUE_ID}`
+  );
+});
+
+test("popup.html leagueId placeholder is generic, not a real league id", () => {
+  const m = _popupHtml.match(/id="leagueId"[^>]*placeholder="([^"]*)"/);
+  assert.ok(m, "could not find the leagueId input placeholder in popup.html");
+  assert.ok(
+    !_looksLikeRealLeagueId(m[1]),
+    `leagueId placeholder has the shape of a real league id: ${m[1]}`
+  );
 });
 
 // ─── Summary ──────────────────────────────────────────────────────────────────
